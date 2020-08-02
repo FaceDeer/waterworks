@@ -178,14 +178,43 @@ waterworks.execute_pipes = function(net_index, net_capacity)
 		
 		-- pressure_margin allows us to check sources that are a little bit below sinks,
 		-- in case the extra pressure from their water depth is sufficient to force water through
-		if source.pressure + pressure_margin >= sink.pressure then 
-			local source_pos = find_source(source.target)
+		if source.pressure + pressure_margin >= sink.pressure then
+			local source_pos
 			local sink_pos
+
+			-- The "stored_liquid" metadata key can be defined as an integer that counts
+			-- how many liquid source nodes this inlet currently contains.
+			local source_meta = minetest.get_meta(source.pos)
+			local stored_liquid = source_meta:get_int("stored_liquid")
+
+			-- Any liquid stored within the inlet will be prioritized over liquid in front of the inlet.
+			if stored_liquid > 0 then
+				source_pos = source.pos
+			else
+				source_pos = find_source(source.target)
+			end
+
 			if source_pos ~= nil then
 				sink_pos = flood_search_outlet(sink.target, math.max(source.pressure, source_pos.y))
 				if sink_pos ~= nil then
 					minetest.swap_node(sink_pos, {name="default:water_source"})
-					minetest.swap_node(source_pos, {name="air"})
+
+					-- source_pos and source.pos are only ever equal if water is taken from the inlet's storage.
+					if source_pos == source.pos then
+						source_meta:set_int("stored_liquid", stored_liquid - 1)
+
+						-- Taking from an inlet's storage likely shouldn't delete the inlet,
+						-- so instead let the inlet decide what to do next, if anything.
+						local source_def = minetest.registered_nodes[minetest.get_node(source_pos).name]
+
+						if source_def._waterworks_on_liquid_taken then
+							source_def._waterworks_on_liquid_taken(source_pos, source_meta)
+						end
+					else
+						-- Otherwise, since the inlet is taking directly from a liquid source node, remove it.
+						minetest.swap_node(source_pos, {name="air"})
+					end
+
 					count = count + 1
 				end
 			end
